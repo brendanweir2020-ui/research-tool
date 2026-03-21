@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>PT Research Tool</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+<!-- Sidebar -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <div class="logo">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M9 12l2 2 4-4"/>
+        <path d="M21 12c.552 0 1-.448 1-1V7a1 1 0 0 0-.553-.894l-4-2A1 1 0 0 0 17 4H7a1 1 0 0 0-.447.106l-4 2A1 1 0 0 0 2 7v4c0 .552.448 1 1 1"/>
+        <path d="M3 12c0 4.418 4.03 8 9 8s9-3.582 9-8"/>
+      </svg>
+      PT Research
+    </div>
+    <button class="new-btn" onclick="showUpload()">+ New</button>
+  </div>
+
+  <div class="sidebar-section-label">Recent Documents</div>
+  <div class="history-list" id="historyList">
+    <div class="history-empty">No documents yet.<br>Upload your first research paper above.</div>
+  </div>
+</aside>
+
+<!-- Main Content -->
+<main class="main" id="main">
+
+  <!-- Upload View -->
+  <div class="view" id="uploadView">
+    <div class="upload-container">
+      <h1 class="upload-title">PT Research Digest</h1>
+      <p class="upload-subtitle">Upload a research paper or paste a URL to get a PT-focused summary with exercise protocols and clinical insights.</p>
+
+      <!-- File Drop Zone -->
+      <div class="drop-zone" id="dropZone">
+        <div class="drop-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+        </div>
+        <p class="drop-text">Drag &amp; drop your file here</p>
+        <p class="drop-subtext">PDF, Word (.docx), or plain text (.txt) — up to 50MB</p>
+        <input type="file" id="fileInput" accept=".pdf,.docx,.txt" hidden />
+        <button class="browse-btn" onclick="document.getElementById('fileInput').click()">Browse Files</button>
+      </div>
+
+      <div class="divider"><span>or</span></div>
+
+      <!-- URL Input -->
+      <div class="url-row">
+        <input type="url" id="urlInput" class="url-input" placeholder="Paste a URL to a research article or web page..." />
+        <button class="analyze-btn" id="urlAnalyzeBtn" onclick="analyzeUrl()">Analyze</button>
+      </div>
+
+      <div class="error-box" id="errorBox" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- Loading View -->
+  <div class="view" id="loadingView" style="display:none">
+    <div class="loading-container">
+      <div class="spinner"></div>
+      <h2>Analyzing Research...</h2>
+      <p id="loadingMessage">Reading document and extracting clinical insights. This may take 20–60 seconds.</p>
+      <div class="loading-steps">
+        <div class="step active" id="step1">📄 Reading document</div>
+        <div class="step" id="step2">🧠 Analyzing with AI</div>
+        <div class="step" id="step3">📋 Structuring clinical output</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results View -->
+  <div class="view" id="resultsView" style="display:none">
+    <div class="results-container">
+
+      <!-- Results Header -->
+      <div class="results-header">
+        <div class="results-meta">
+          <button class="back-btn" onclick="showUpload()">← New Document</button>
+          <span class="results-source" id="resultsSource"></span>
+        </div>
+        <button class="export-btn" onclick="exportResults()">Export PDF</button>
+      </div>
+
+      <!-- Title + Evidence Badge -->
+      <div class="results-title-row">
+        <h2 class="results-title" id="resultsTitle"></h2>
+        <div class="evidence-badge" id="evidenceBadge"></div>
+      </div>
+
+      <!-- Evidence Explanation -->
+      <div class="evidence-detail" id="evidenceDetail"></div>
+
+      <!-- Clinical Bottom Line -->
+      <div class="bottom-line-card" id="bottomLineCard">
+        <div class="bottom-line-label">Clinical Bottom Line</div>
+        <div class="bottom-line-text" id="bottomLineText"></div>
+      </div>
+
+      <!-- Clinical Summary -->
+      <div class="card">
+        <h3 class="card-title">Clinical Summary</h3>
+        <p class="summary-text" id="clinicalSummary"></p>
+        <div class="key-findings" id="keyFindings"></div>
+        <div class="population-tag" id="populationTag"></div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="tabs">
+        <button class="tab active" onclick="switchTab('exercise')">Exercise Protocols</button>
+        <button class="tab" onclick="switchTab('patient')">Patient Education</button>
+        <button class="tab" onclick="switchTab('clinical')">Clinical Decisions</button>
+        <button class="tab" onclick="switchTab('limitations')">Limitations</button>
+      </div>
+
+      <!-- Exercise Protocols Tab -->
+      <div class="tab-content" id="tab-exercise">
+        <div id="exerciseContent"></div>
+      </div>
+
+      <!-- Patient Education Tab -->
+      <div class="tab-content" id="tab-patient" style="display:none">
+        <div class="education-intro">Plain-language points you can share with patients:</div>
+        <ul class="education-list" id="patientContent"></ul>
+      </div>
+
+      <!-- Clinical Decisions Tab -->
+      <div class="tab-content" id="tab-clinical" style="display:none">
+        <div id="clinicalContent"></div>
+      </div>
+
+      <!-- Limitations Tab -->
+      <div class="tab-content" id="tab-limitations" style="display:none">
+        <ul class="limitations-list" id="limitationsContent"></ul>
+      </div>
+
+    </div>
+  </div>
+
+</main>
+
+<!-- Print/Export Template (hidden) -->
+<div id="printTemplate" style="display:none"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
