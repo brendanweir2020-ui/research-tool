@@ -16,9 +16,12 @@ document.addEventListener('DOMContentLoaded', () => {
   loadConditionLibrary();
 });
 
+// ── Batch State ──
+let batchCancelled = false;
+
 // ── View Switching ──
 function showView(id) {
-  ['uploadView','loadingView','synthesizeLoadingView','resultsView','synthesisView'].forEach(v => {
+  ['uploadView','loadingView','batchView','synthesizeLoadingView','resultsView','synthesisView'].forEach(v => {
     document.getElementById(v).style.display = v === id ? '' : 'none';
   });
 }
@@ -43,13 +46,31 @@ function setupDropZone() {
   const zone = document.getElementById('dropZone');
   zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
   zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
-  zone.addEventListener('drop', e => { e.preventDefault(); zone.classList.remove('drag-over'); const f = e.dataTransfer.files[0]; if (f) processFile(f); });
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('drag-over');
+    const files = Array.from(e.dataTransfer.files).filter(f => {
+      const ext = f.name.split('.').pop().toLowerCase();
+      return ['pdf','docx','txt'].includes(ext);
+    });
+    if (files.length > 1) startBatch(files);
+    else if (files.length === 1) processFile(files[0]);
+    else showError('No supported files dropped. Use PDF, Word, or TXT.');
+  });
   zone.addEventListener('click', () => document.getElementById('fileInput').click());
 }
 
 function setupFileInput() {
   document.getElementById('fileInput').addEventListener('change', e => {
     const f = e.target.files[0]; if (f) processFile(f); e.target.value = '';
+  });
+  document.getElementById('folderInput').addEventListener('change', e => {
+    const files = Array.from(e.target.files).filter(f => {
+      const ext = f.name.split('.').pop().toLowerCase();
+      return ['pdf','docx','txt'].includes(ext) && f.size <= 50 * 1024 * 1024;
+    });
+    e.target.value = '';
+    if (files.length) startBatch(files);
+    else showError('No supported files found in that folder (PDF, Word, or TXT, under 50MB each).');
   });
 }
 
@@ -523,6 +544,103 @@ async function deleteResult(event, id) {
   if (currentResult && currentResult.id === id) { showUpload(); currentResult = null; }
   loadHistory(); loadConditionLibrary();
 }
+
+// ── Batch Processing ──
+async function startBatch(files) {
+  batchCancelled = false;
+  const total = files.length;
+
+  // Already-processed filenames (skip duplicates)
+  let existingTitles = new Set();
+  try {
+    const h = await fetch('/history');
+    const items = await h.json();
+    items.forEach(i => existingTitles.add(i.source));
+  } catch {}
+
+  // Build file list UI
+  showView('batchView');
+  document.getElementById('batchTitle').textContent = `Processing ${total} file${total > 1 ? 's' : ''}`;
+  document.getElementById('batchSubtitle').textContent = 'Analyzing one at a time — please keep this window open.';
+  document.getElementById('batchProgressBar').style.width = '0%';
+  document.getElementById('batchCancelBtn').style.display = '';
+
+  const listEl = document.getElementById('batchFileList');
+  listEl.innerHTML = files.map((f, i) => {
+    const alreadyDone = existingTitles.has(f.name);
+    return `<div class="batch-file-item" id="bfi-${i}">
+      <span class="batch-file-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</span>
+      <span class="batch-file-status ${alreadyDone ? 'batch-status-skipped' : 'batch-status-waiting'}" id="bfs-${i}">
+        ${alreadyDone ? 'Already done' : 'Waiting'}
+      </span>
+    </div>`;
+  }).join('');
+
+  let done = 0;
+  for (let i = 0; i < files.length; i++) {
+    if (batchCancelled) break;
+
+    const file = files[i];
+
+    // Skip already processed
+    if (existingTitles.has(file.name)) { done++; updateBatchProgress(done, total); continue; }
+
+    setBatchStatus(i, 'processing', 'Analyzing...');
+    document.getElementById('batchCounter').textContent = `${done + 1} of ${total}`;
+
+    try {
+      const fd = new FormData(); fd.append('file', file);
+      const res = await fetch('/process', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (res.ok) {
+        setBatchStatus(i, 'done', '✓ Done');
+        currentResult = data;
+      } else {
+        setBatchStatus(i, 'error', data.error?.slice(0, 30) || 'Error');
+      }
+    } catch {
+      setBatchStatus(i, 'error', 'Failed');
+    }
+
+    done++;
+    updateBatchProgress(done, total);
+    loadHistory();
+    loadConditionLibrary();
+
+    // Small pause between files so the API isn't hit too fast
+    if (i < files.length - 1 && !batchCancelled) await sleep(1500);
+  }
+
+  // Finished
+  document.getElementById('batchTitle').textContent = batchCancelled ? 'Batch Cancelled' : 'All Done!';
+  document.getElementById('batchSubtitle').textContent = batchCancelled
+    ? `Processed ${done} of ${total} files before cancelling.`
+    : `${done} paper${done !== 1 ? 's' : ''} processed and added to your library.`;
+  document.getElementById('batchCancelBtn').textContent = '← Back to Library';
+  document.getElementById('batchCancelBtn').onclick = showUpload;
+
+  if (currentResult && !batchCancelled) {
+    await sleep(1800);
+    renderResults(currentResult);
+  }
+}
+
+function setBatchStatus(index, statusKey, label) {
+  const el = document.getElementById(`bfs-${index}`);
+  if (!el) return;
+  el.className = `batch-file-status batch-status-${statusKey}`;
+  el.textContent = label;
+  el.closest('.batch-file-item')?.scrollIntoView({ block: 'nearest' });
+}
+
+function updateBatchProgress(done, total) {
+  document.getElementById('batchProgressBar').style.width = `${Math.round((done / total) * 100)}%`;
+  document.getElementById('batchCounter').textContent = `${done} of ${total} complete`;
+}
+
+function cancelBatch() { batchCancelled = true; }
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 function setupChatInput() {
   const input = document.getElementById('chatInput');

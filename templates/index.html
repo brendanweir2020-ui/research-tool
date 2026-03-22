@@ -59,10 +59,17 @@
             <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
           </svg>
         </div>
-        <p class="drop-text">Drag &amp; drop your file here</p>
-        <p class="drop-subtext">PDF, Word (.docx), or plain text (.txt) — up to 50MB</p>
+        <p class="drop-text">Drag &amp; drop files here</p>
+        <p class="drop-subtext">PDF, Word (.docx), or plain text (.txt) — one file or a whole folder</p>
         <input type="file" id="fileInput" accept=".pdf,.docx,.txt" hidden />
-        <button class="browse-btn" onclick="document.getElementById('fileInput').click()">Browse Files</button>
+        <input type="file" id="folderInput" webkitdirectory hidden />
+        <div class="browse-btn-row">
+          <button class="browse-btn" onclick="document.getElementById('fileInput').click()">Browse Files</button>
+          <button class="browse-btn folder-btn" onclick="document.getElementById('folderInput').click()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            Browse Folder
+          </button>
+        </div>
       </div>
 
       <div class="divider"><span>or</span></div>
@@ -73,6 +80,23 @@
       </div>
 
       <div class="error-box" id="errorBox" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- Batch Processing View -->
+  <div class="view" id="batchView" style="display:none">
+    <div class="loading-container">
+      <div class="batch-header">
+        <div class="spinner"></div>
+        <h2 id="batchTitle">Processing Folder...</h2>
+        <p id="batchSubtitle">Analyzing papers one at a time.</p>
+      </div>
+      <div class="batch-progress-bar-wrap">
+        <div class="batch-progress-bar" id="batchProgressBar"></div>
+      </div>
+      <div class="batch-counter" id="batchCounter"></div>
+      <div class="batch-file-list" id="batchFileList"></div>
+      <button class="batch-cancel-btn" id="batchCancelBtn" onclick="cancelBatch()">Cancel</button>
     </div>
   </div>
 
