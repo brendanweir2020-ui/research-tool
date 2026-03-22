@@ -75,9 +75,28 @@ def extract_text_from_url(url):
     return soup.get_text(separator='\n', strip=True)
 
 
+def call_groq_with_retry(client, **kwargs):
+    """Call Groq API with automatic retry on rate limit errors."""
+    import time
+    delays = [15, 30, 60]  # seconds to wait on each retry
+    for attempt, delay in enumerate(delays + [None]):
+        try:
+            return client.chat.completions.create(**kwargs)
+        except Exception as e:
+            err = str(e)
+            if '429' in err or 'rate limit' in err.lower() or 'quota' in err.lower():
+                if delay is None:
+                    raise Exception(f"Rate limit exceeded after {len(delays)} retries. Try again in a minute.")
+                print(f"Rate limit hit — waiting {delay}s before retry {attempt + 1}...")
+                time.sleep(delay)
+            else:
+                raise
+
+
 def analyze_document(text, source_name):
     client = get_groq_client()
-    trimmed_text = text[:24000]
+    # Keep under ~3,000 tokens of content to stay within free-tier TPM limits
+    trimmed_text = text[:10000]
 
     prompt = f"""You are an expert clinical assistant specializing in physical therapy and musculoskeletal rehabilitation. Analyze the following research document and extract highly specific, clinically actionable information that a PT can use directly in practice.
 
@@ -156,7 +175,7 @@ Provide your analysis as a valid JSON object. Be precise and specific — includ
 
 Return ONLY the JSON object. No markdown, no explanation, no code blocks — just raw JSON."""
 
-    response = client.chat.completions.create(
+    response = call_groq_with_retry(client,
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
         max_tokens=4096,
@@ -240,7 +259,7 @@ Return a JSON object with this structure:
 
 Return ONLY the JSON. No markdown, no code blocks."""
 
-    response = client.chat.completions.create(
+    response = call_groq_with_retry(client,
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
         max_tokens=4096,
@@ -539,7 +558,7 @@ Answer questions as a knowledgeable clinical colleague would — practically, sp
         messages.append({"role": h['role'], "content": h['content']})
     messages.append({"role": "user", "content": message})
 
-    response = client.chat.completions.create(
+    response = call_groq_with_retry(client,
         model="llama-3.3-70b-versatile",
         messages=messages,
         max_tokens=1024,

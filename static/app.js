@@ -561,7 +561,7 @@ async function startBatch(files) {
   // Build file list UI
   showView('batchView');
   document.getElementById('batchTitle').textContent = `Processing ${total} file${total > 1 ? 's' : ''}`;
-  document.getElementById('batchSubtitle').textContent = 'Analyzing one at a time — please keep this window open.';
+  document.getElementById('batchSubtitle').textContent = 'Analyzing one at a time with a short pause between each — keep this window open.';
   document.getElementById('batchProgressBar').style.width = '0%';
   document.getElementById('batchCancelBtn').style.display = '';
 
@@ -596,10 +596,12 @@ async function startBatch(files) {
         setBatchStatus(i, 'done', '✓ Done');
         currentResult = data;
       } else {
-        setBatchStatus(i, 'error', data.error?.slice(0, 30) || 'Error');
+        const msg = data.error || 'Error';
+        setBatchStatus(i, 'error', '✗ Error', msg);
+        console.error(`File "${file.name}" failed:`, msg);
       }
-    } catch {
-      setBatchStatus(i, 'error', 'Failed');
+    } catch(err) {
+      setBatchStatus(i, 'error', '✗ Failed', err.message || 'Network error');
     }
 
     done++;
@@ -607,8 +609,11 @@ async function startBatch(files) {
     loadHistory();
     loadConditionLibrary();
 
-    // Small pause between files so the API isn't hit too fast
-    if (i < files.length - 1 && !batchCancelled) await sleep(1500);
+    // Wait between files — Groq free tier has token-per-minute limits
+    if (i < files.length - 1 && !batchCancelled) {
+      setBatchStatus(i + 1, 'processing', '⏳ Starting...');
+      await sleep(5000);
+    }
   }
 
   // Finished
@@ -625,12 +630,24 @@ async function startBatch(files) {
   }
 }
 
-function setBatchStatus(index, statusKey, label) {
+function setBatchStatus(index, statusKey, label, tooltip) {
   const el = document.getElementById(`bfs-${index}`);
   if (!el) return;
   el.className = `batch-file-status batch-status-${statusKey}`;
   el.textContent = label;
+  if (tooltip) el.title = tooltip;
   el.closest('.batch-file-item')?.scrollIntoView({ block: 'nearest' });
+
+  // Show error detail below the file item
+  if (statusKey === 'error' && tooltip) {
+    const item = el.closest('.batch-file-item');
+    if (item && !item.querySelector('.batch-error-detail')) {
+      const detail = document.createElement('div');
+      detail.className = 'batch-error-detail';
+      detail.textContent = tooltip;
+      item.insertAdjacentElement('afterend', detail);
+    }
+  }
 }
 
 function updateBatchProgress(done, total) {
