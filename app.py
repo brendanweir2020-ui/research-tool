@@ -452,6 +452,104 @@ def delete_result(result_id):
     return jsonify({'success': True})
 
 
+@app.route('/chat', methods=['POST'])
+def chat():
+    data = request.get_json()
+    message = data.get('message', '').strip()
+    history = data.get('history', [])  # [{role, content}, ...]
+    context = data.get('context', {})  # paper analysis or synthesis data
+
+    if not message:
+        return jsonify({'error': 'No message provided'}), 400
+
+    try:
+        client = get_groq_client()
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+    # Build system prompt from paper/synthesis context
+    ctx_type = context.get('type', 'paper')
+    if ctx_type == 'synthesis':
+        s = context.get('synthesis', {})
+        system = f"""You are an expert physical therapy clinical assistant. A PT is asking you questions about a research synthesis they just generated.
+
+SYNTHESIS TOPIC: {context.get('condition', '')}
+PAPERS COMPILED: {context.get('paper_count', '')}
+
+OVERALL EVIDENCE: {s.get('overall_evidence_strength', '')}
+
+CONSENSUS FINDINGS:
+{chr(10).join('- ' + f for f in s.get('consensus_findings', []))}
+
+CONFLICTING FINDINGS:
+{chr(10).join('- ' + f for f in s.get('conflicting_findings', []))}
+
+MASTER PROTOCOL PHASES:
+{json.dumps(s.get('master_exercise_protocol', []), indent=2)}
+
+COMBINED PATIENT EDUCATION:
+{chr(10).join('- ' + f for f in s.get('combined_patient_education', []))}
+
+CLINICAL BOTTOM LINE: {s.get('clinical_bottom_line', '')}
+
+RESEARCH GAPS:
+{chr(10).join('- ' + g for g in s.get('research_gaps', []))}"""
+
+    else:
+        a = context.get('analysis', {})
+        eq = a.get('evidence_quality', {})
+        system = f"""You are an expert physical therapy clinical assistant. A PT is asking you questions about a research paper they just analyzed.
+
+PAPER: {a.get('title', context.get('source', ''))}
+CONDITION: {a.get('condition', '')}
+EVIDENCE LEVEL: {eq.get('level', '')} ({eq.get('score', '')}/5)
+EVIDENCE EXPLANATION: {eq.get('explanation', '')}
+
+CLINICAL SUMMARY:
+{a.get('clinical_summary', '')}
+
+KEY FINDINGS:
+{chr(10).join('- ' + f for f in a.get('key_findings', []))}
+
+POPULATION STUDIED: {a.get('population_studied', '')}
+
+EXERCISE PROTOCOLS:
+{json.dumps(a.get('exercise_protocols', []), indent=2)}
+
+PATIENT EDUCATION POINTS:
+{chr(10).join('- ' + p for p in a.get('patient_education', []))}
+
+CLINICAL DECISION POINTS:
+{json.dumps(a.get('clinical_decision_points', {}), indent=2)}
+
+OUTCOME MEASURES: {', '.join(a.get('outcome_measures_used', []))}
+
+LIMITATIONS:
+{chr(10).join('- ' + l for l in a.get('limitations', []))}
+
+CLINICAL BOTTOM LINE: {a.get('clinical_bottom_line', '')}"""
+
+    system += """
+
+Answer questions as a knowledgeable clinical colleague would — practically, specifically, and concisely. Reference exact data from the research when relevant (sets/reps, percentages, timeframes). If the PT asks something not covered by the research, say so clearly and offer your best clinical reasoning. Keep responses focused and well-structured. Use bullet points when listing multiple items."""
+
+    messages = [{"role": "system", "content": system}]
+    # Add conversation history (last 10 exchanges to stay within token budget)
+    for h in history[-20:]:
+        messages.append({"role": h['role'], "content": h['content']})
+    messages.append({"role": "user", "content": message})
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=messages,
+        max_tokens=1024,
+        temperature=0.3,
+    )
+
+    reply = response.choices[0].message.content.strip()
+    return jsonify({'reply': reply})
+
+
 if __name__ == '__main__':
     import webbrowser
     import threading

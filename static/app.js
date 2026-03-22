@@ -1,5 +1,6 @@
 // ── State ──
 let currentResult = null;
+let currentSynthesis = null;
 let currentTags = [];
 let allTags = [];  // all tags used across papers
 let activeTab = 'exercise';
@@ -10,6 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupFileInput();
   setupUrlInput();
   setupTagInput();
+  setupChatInput();
   loadHistory();
   loadConditionLibrary();
 });
@@ -410,6 +412,7 @@ async function runSynthesis(tag, condition) {
 }
 
 function renderSynthesis(data) {
+  currentSynthesis = data;
   const s = data.synthesis;
   showView('synthesisView');
 
@@ -519,6 +522,144 @@ async function deleteResult(event, id) {
   await fetch(`/delete/${id}`, { method: 'DELETE' });
   if (currentResult && currentResult.id === id) { showUpload(); currentResult = null; }
   loadHistory(); loadConditionLibrary();
+}
+
+function setupChatInput() {
+  const input = document.getElementById('chatInput');
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMessage(); }
+  });
+  // Auto-resize textarea
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+  });
+}
+
+// ── Chat ──
+let chatHistory = [];
+let chatContext = null;
+
+const PAPER_SUGGESTIONS = [
+  "Which exercises should I start with for a new patient?",
+  "What's the recommended pain level during exercise?",
+  "How would I explain this condition to a patient in simple terms?",
+  "What are the biggest red flags I should watch for?",
+  "How strong is the evidence and should I trust these results clinically?",
+];
+
+const SYNTHESIS_SUGGESTIONS = [
+  "Summarize the most important takeaways across all these papers.",
+  "Where do these papers disagree and which evidence should I follow?",
+  "Build me a week-by-week rehab plan based on this research.",
+  "What questions does this research leave unanswered?",
+  "What would you tell a patient about their prognosis based on this research?",
+];
+
+function openChat(type) {
+  chatHistory = [];
+  const panel = document.getElementById('chatPanel');
+  const overlay = document.getElementById('chatOverlay');
+  const messages = document.getElementById('chatMessages');
+  const input = document.getElementById('chatInput');
+
+  if (type === 'synthesis' && currentSynthesis) {
+    chatContext = { type: 'synthesis', ...currentSynthesis };
+    document.getElementById('chatContextLabel').textContent = '📚 ' + (currentSynthesis.condition || 'Synthesis');
+    renderChatSuggestions(SYNTHESIS_SUGGESTIONS);
+  } else if (currentResult) {
+    chatContext = { type: 'paper', ...currentResult };
+    const title = currentResult.analysis?.title || currentResult.source || 'Paper';
+    document.getElementById('chatContextLabel').textContent = '📄 ' + truncate(title, 55);
+    renderChatSuggestions(PAPER_SUGGESTIONS);
+  } else { return; }
+
+  messages.innerHTML = `<div class="chat-welcome"><p>Ask me anything about this research. For example:</p><div class="chat-suggestions" id="chatSuggestions"></div></div>`;
+  renderChatSuggestions(type === 'synthesis' ? SYNTHESIS_SUGGESTIONS : PAPER_SUGGESTIONS);
+
+  panel.classList.add('open');
+  overlay.classList.add('open');
+  setTimeout(() => input.focus(), 300);
+}
+
+function closeChat() {
+  document.getElementById('chatPanel').classList.remove('open');
+  document.getElementById('chatOverlay').classList.remove('open');
+}
+
+function renderChatSuggestions(suggestions) {
+  const container = document.getElementById('chatSuggestions');
+  if (!container) return;
+  container.innerHTML = suggestions.map(s =>
+    `<button class="chat-suggestion-btn" onclick="useSuggestion(this)">${escapeHtml(s)}</button>`
+  ).join('');
+}
+
+function useSuggestion(btn) {
+  document.getElementById('chatInput').value = btn.textContent;
+  sendChatMessage();
+}
+
+async function sendChatMessage() {
+  const input = document.getElementById('chatInput');
+  const message = input.value.trim();
+  if (!message || !chatContext) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+
+  // Clear welcome screen on first message
+  const welcome = document.querySelector('.chat-welcome');
+  if (welcome) welcome.remove();
+
+  appendChatMsg('user', message);
+  const typing = appendTyping();
+
+  document.getElementById('chatSendBtn').disabled = true;
+
+  try {
+    const res = await fetch('/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, history: chatHistory, context: chatContext })
+    });
+    const data = await res.json();
+    typing.remove();
+
+    if (!res.ok) {
+      appendChatMsg('assistant', '⚠️ ' + (data.error || 'Something went wrong. Please try again.'));
+    } else {
+      chatHistory.push({ role: 'user', content: message });
+      chatHistory.push({ role: 'assistant', content: data.reply });
+      appendChatMsg('assistant', data.reply);
+    }
+  } catch {
+    typing.remove();
+    appendChatMsg('assistant', '⚠️ Could not reach the server. Make sure the app is running.');
+  }
+
+  document.getElementById('chatSendBtn').disabled = false;
+  input.focus();
+}
+
+function appendChatMsg(role, text) {
+  const container = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = `chat-msg ${role}`;
+  div.innerHTML = `<div class="chat-bubble">${escapeHtml(text)}</div>`;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  return div;
+}
+
+function appendTyping() {
+  const container = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = 'chat-msg assistant';
+  div.innerHTML = `<div class="chat-typing"><div class="chat-dot"></div><div class="chat-dot"></div><div class="chat-dot"></div></div>`;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  return div;
 }
 
 // ── Export ──

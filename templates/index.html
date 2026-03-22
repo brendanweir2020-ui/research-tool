@@ -108,7 +108,10 @@
           <button class="back-btn" onclick="showUpload()">← New</button>
           <span class="results-source" id="resultsSource"></span>
         </div>
-        <button class="export-btn" onclick="exportResults()">Print / Export</button>
+        <div style="display:flex;gap:8px">
+          <button class="ask-ai-btn" onclick="openChat('paper')">💬 Ask AI</button>
+          <button class="export-btn" onclick="exportResults()">Print / Export</button>
+        </div>
       </div>
 
       <div class="results-title-row">
@@ -169,7 +172,10 @@
           <button class="back-btn" onclick="showUpload()">← New</button>
           <span class="results-source" id="synthesisSource"></span>
         </div>
-        <button class="export-btn" onclick="exportResults()">Print / Export</button>
+        <div style="display:flex;gap:8px">
+          <button class="ask-ai-btn" onclick="openChat('synthesis')">💬 Ask AI</button>
+          <button class="export-btn" onclick="exportResults()">Print / Export</button>
+        </div>
       </div>
 
       <div class="synthesis-title-row">
@@ -206,6 +212,34 @@
   </div>
 
 </main>
+
+<!-- Chat Panel (shared between paper + synthesis views) -->
+<div class="chat-panel" id="chatPanel">
+  <div class="chat-header">
+    <div class="chat-title">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      Ask AI about this research
+    </div>
+    <button class="chat-close" onclick="closeChat()">×</button>
+  </div>
+
+  <div class="chat-context-label" id="chatContextLabel"></div>
+
+  <div class="chat-messages" id="chatMessages">
+    <div class="chat-welcome">
+      <p>Ask me anything about this research. For example:</p>
+      <div class="chat-suggestions" id="chatSuggestions"></div>
+    </div>
+  </div>
+
+  <div class="chat-input-area">
+    <textarea class="chat-input" id="chatInput" placeholder="Ask a clinical question..." rows="2"></textarea>
+    <button class="chat-send" id="chatSendBtn" onclick="sendChatMessage()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+    </button>
+  </div>
+</div>
+<div class="chat-overlay" id="chatOverlay" onclick="closeChat()"></div>
 
 <script src="/static/app.js"></script>
 </body>
