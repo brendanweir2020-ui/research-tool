@@ -5,7 +5,7 @@ import datetime
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
-import anthropic
+import google.generativeai as genai
 import PyPDF2
 import docx
 import requests
@@ -59,15 +59,16 @@ def extract_text_from_url(url):
     return soup.get_text(separator='\n', strip=True)
 
 
-def analyze_with_claude(text, source_name):
-    api_key = os.getenv('ANTHROPIC_API_KEY')
+def analyze_with_gemini(text, source_name):
+    api_key = os.getenv('GEMINI_API_KEY')
     if not api_key:
-        raise ValueError("ANTHROPIC_API_KEY not set in .env file")
+        raise ValueError("GEMINI_API_KEY not set in .env file")
 
-    client = anthropic.Anthropic(api_key=api_key)
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel('gemini-2.0-flash')
 
-    # Trim to avoid token limits (roughly ~150k chars = ~37k tokens, safe for claude-opus-4-6)
-    trimmed_text = text[:120000]
+    # Gemini 2.0 Flash supports up to 1M tokens — trim generously
+    trimmed_text = text[:300000]
 
     prompt = f"""You are a clinical summarization assistant specializing in physical therapy. Analyze the following research document and extract clinically useful information for a physical therapist.
 
@@ -137,14 +138,10 @@ Provide your analysis as a valid JSON object with EXACTLY these keys. Be thoroug
 
 Return ONLY the JSON object. No markdown, no explanation, no code blocks — just the raw JSON."""
 
-    message = client.messages.create(
-        model="claude-opus-4-6",
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}]
-    )
+    response = model.generate_content(prompt)
+    raw = response.text.strip()
 
-    raw = message.content[0].text.strip()
-    # Strip markdown code blocks if Claude includes them
+    # Strip markdown code blocks if Gemini wraps them
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -161,9 +158,9 @@ def index():
 
 @app.route('/process', methods=['POST'])
 def process():
-    api_key = os.getenv('ANTHROPIC_API_KEY')
+    api_key = os.getenv('GEMINI_API_KEY')
     if not api_key or api_key == 'your-api-key-here':
-        return jsonify({'error': 'API key not configured. Please add your Anthropic API key to the .env file and restart the app.'}), 400
+        return jsonify({'error': 'API key not configured. Please add your Gemini API key to the .env file and restart the app.'}), 400
 
     source_name = ""
     text = ""
@@ -211,7 +208,7 @@ def process():
         return jsonify({'error': 'Could not extract any text from the document. Please check the file is not scanned/image-only.'}), 400
 
     try:
-        analysis = analyze_with_claude(text, source_name)
+        analysis = analyze_with_gemini(text, source_name)
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     except json.JSONDecodeError:
