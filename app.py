@@ -112,10 +112,20 @@ def call_groq_with_retry(client, **kwargs):
                 raise
 
 
-def analyze_document(text, source_name):
+def analyze_document(text, source_name, batch_mode=False):
     client = get_groq_client()
-    # Keep under ~3,000 tokens of content to stay within free-tier TPM limits
-    trimmed_text = text[:10000]
+
+    if batch_mode:
+        # Batch mode: use llama-3.1-8b-instant (20k TPM vs 6k for 70b)
+        # with smaller context so many files can run without hitting limits
+        model = "llama-3.1-8b-instant"
+        max_out = 2048
+        trimmed_text = text[:8000]
+    else:
+        # Single paper: use the best model for quality
+        model = "llama-3.3-70b-versatile"
+        max_out = 4096
+        trimmed_text = text[:10000]
 
     prompt = f"""You are an expert clinical assistant specializing in physical therapy and musculoskeletal rehabilitation. Analyze the following research document and extract highly specific, clinically actionable information that a PT can use directly in practice.
 
@@ -195,9 +205,9 @@ Provide your analysis as a valid JSON object. Be precise and specific — includ
 Return ONLY the JSON object. No markdown, no explanation, no code blocks — just raw JSON."""
 
     response = call_groq_with_retry(client,
-        model="llama-3.3-70b-versatile",
+        model=model,
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=4096,
+        max_tokens=max_out,
         temperature=0.2,
     )
 
@@ -304,6 +314,7 @@ def process():
 
     source_name = ""
     text = ""
+    batch_mode = request.headers.get('X-Batch-Mode') == '1'
 
     if request.is_json:
         data = request.get_json()
@@ -349,7 +360,7 @@ def process():
 
     print(f"  [OK] Extracted {len(text.split())} words from {source_name}, sending to AI...")
     try:
-        analysis = analyze_document(text, source_name)
+        analysis = analyze_document(text, source_name, batch_mode=batch_mode)
         print(f"  [OK] Analysis complete for {source_name}")
     except ValueError as e:
         print(f"  [ERROR] {source_name}: {e}")

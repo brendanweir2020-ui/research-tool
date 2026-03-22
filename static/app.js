@@ -593,7 +593,10 @@ async function startBatch(files) {
 
     try {
       const fd = new FormData(); fd.append('file', file);
-      const res = await fetch('/process', { method: 'POST', body: fd });
+      const res = await fetch('/process', {
+        method: 'POST', body: fd,
+        headers: { 'X-Batch-Mode': '1' }
+      });
       const data = await res.json();
       if (res.ok) {
         setBatchStatus(i, 'done', '✓ Done');
@@ -614,8 +617,7 @@ async function startBatch(files) {
 
     // Wait between files — Groq free tier has token-per-minute limits
     if (i < files.length - 1 && !batchCancelled) {
-      setBatchStatus(i + 1, 'processing', '⏳ Starting...');
-      await sleep(5000);
+      await batchCountdown(12); // 12s keeps us under llama-3.1-8b-instant's 20k TPM limit
     }
   }
 
@@ -659,6 +661,16 @@ function updateBatchProgress(done, total) {
 function cancelBatch() { batchCancelled = true; }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function batchCountdown(seconds) {
+  const subtitle = document.getElementById('batchSubtitle');
+  for (let s = seconds; s > 0; s--) {
+    if (batchCancelled) return;
+    subtitle.textContent = `Waiting ${s}s before next file (rate limit pause)...`;
+    await sleep(1000);
+  }
+  subtitle.textContent = 'Analyzing one at a time — keep this window open.';
+}
 
 function setupChatInput() {
   const input = document.getElementById('chatInput');
