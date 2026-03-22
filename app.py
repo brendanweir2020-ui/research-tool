@@ -7,7 +7,12 @@ from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
 from groq import Groq
 import PyPDF2
-from pdfminer.high_level import extract_text as pdfminer_extract
+try:
+    from pdfminer.high_level import extract_text as pdfminer_extract
+    PDFMINER_AVAILABLE = True
+except Exception:
+    PDFMINER_AVAILABLE = False
+    print("[WARN] pdfminer not available, using PyPDF2 only")
 import docx
 import requests
 from bs4 import BeautifulSoup
@@ -52,13 +57,14 @@ def strip_json(raw):
 
 def extract_text_from_pdf(file_path):
     # Try pdfminer first (handles modern PDFs better)
-    try:
-        text = pdfminer_extract(file_path)
-        if text and text.strip():
-            print(f"  [PDF] pdfminer extracted {len(text)} chars from {file_path}")
-            return text
-    except Exception as e:
-        print(f"  [PDF] pdfminer failed ({e}), trying PyPDF2...")
+    if PDFMINER_AVAILABLE:
+        try:
+            text = pdfminer_extract(file_path)
+            if text and text.strip():
+                print(f"  [PDF] pdfminer extracted {len(text)} chars from {file_path}")
+                return text
+        except Exception as e:
+            print(f"  [PDF] pdfminer failed ({e}), trying PyPDF2...")
 
     # Fall back to PyPDF2
     try:
@@ -604,6 +610,19 @@ Answer questions as a knowledgeable clinical colleague would — practically, sp
 
     reply = response.choices[0].message.content.strip()
     return jsonify({'reply': reply})
+
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """Return JSON for ALL unhandled errors instead of Flask's HTML error page."""
+    import traceback
+    tb = traceback.format_exc()
+    print(f"\n[UNHANDLED ERROR] {type(e).__name__}: {e}\n{tb}")
+    return jsonify({'error': f'{type(e).__name__}: {str(e)}'}), 500
+
+@app.errorhandler(413)
+def too_large(e):
+    return jsonify({'error': 'File is too large. Maximum size is 50MB.'}), 413
 
 
 if __name__ == '__main__':
