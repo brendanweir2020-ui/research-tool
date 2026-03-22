@@ -5,7 +5,7 @@ import datetime
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
-import google.generativeai as genai
+from groq import Groq
 import PyPDF2
 import docx
 import requests
@@ -31,6 +31,22 @@ def load_results():
 def save_results(results):
     with open(app.config['RESULTS_FILE'], 'w') as f:
         json.dump(results, f, indent=2)
+
+
+def get_groq_client():
+    api_key = os.getenv('GROQ_API_KEY')
+    if not api_key:
+        raise ValueError("GROQ_API_KEY not set in .env file")
+    return Groq(api_key=api_key)
+
+
+def strip_json(raw):
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    return raw.strip()
 
 
 def extract_text_from_pdf(file_path):
@@ -59,97 +75,183 @@ def extract_text_from_url(url):
     return soup.get_text(separator='\n', strip=True)
 
 
-def analyze_with_gemini(text, source_name):
-    api_key = os.getenv('GEMINI_API_KEY')
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY not set in .env file")
+def analyze_document(text, source_name):
+    client = get_groq_client()
+    trimmed_text = text[:24000]
 
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-2.0-flash')
-
-    # Gemini 2.0 Flash supports up to 1M tokens — trim generously
-    trimmed_text = text[:300000]
-
-    prompt = f"""You are a clinical summarization assistant specializing in physical therapy. Analyze the following research document and extract clinically useful information for a physical therapist.
+    prompt = f"""You are an expert clinical assistant specializing in physical therapy and musculoskeletal rehabilitation. Analyze the following research document and extract highly specific, clinically actionable information that a PT can use directly in practice.
 
 Document source: {source_name}
 
 Document content:
 {trimmed_text}
 
-Provide your analysis as a valid JSON object with EXACTLY these keys. Be thorough and clinically specific. If certain information is not present in the document, return an empty array [] or a note saying "Not addressed in this document."
+Provide your analysis as a valid JSON object. Be precise and specific — include actual numbers, dosages, sets/reps, percentages, and outcome measures wherever the research provides them. Do not generalize when specifics are available.
 
 {{
   "title": "The document title, or a descriptive title you infer from the content",
+  "condition": "Primary musculoskeletal condition or body region this research addresses (e.g. 'Shoulder - Bicep Tendinopathy', 'Knee - ACL Reconstruction', 'Lumbar - Disc Herniation')",
   "evidence_quality": {{
     "level": "One of: Systematic Review/Meta-analysis, Randomized Controlled Trial, Cohort/Observational Study, Case Series/Case Report, Expert Opinion/Narrative Review",
     "score": 1,
-    "explanation": "2-3 sentences explaining why you assigned this evidence level and any notable methodological strengths or weaknesses"
+    "explanation": "2-3 sentences on study design quality, sample size, blinding, control groups, follow-up period, and any major methodological strengths or weaknesses"
   }},
-  "clinical_summary": "2-4 sentence overview of the main findings and their clinical relevance to physical therapy",
+  "clinical_summary": "3-5 sentence overview of the key findings and their direct relevance to PT clinical practice",
   "key_findings": [
-    "Specific measurable finding 1 (include statistics/numbers if available)",
-    "Specific measurable finding 2",
-    "Specific measurable finding 3"
+    "Specific finding with numbers (e.g. '67% reduction in pain VAS scores at 6 weeks in the eccentric exercise group vs 23% in controls, p<0.05')",
+    "Another specific measurable finding",
+    "Another specific measurable finding"
   ],
-  "population_studied": "Who was studied — age range, diagnosis, setting, sample size if mentioned",
+  "population_studied": "Age range, sex breakdown if reported, diagnosis criteria, sample size, setting (clinic/hospital/community), inclusion/exclusion criteria summary",
   "exercise_protocols": [
     {{
-      "condition_or_goal": "Specific condition or rehabilitation goal this protocol targets",
+      "condition_or_goal": "Specific condition or rehab phase this protocol targets",
+      "phase": "e.g. Acute (0-2 weeks), Subacute (2-6 weeks), Strengthening, Return to Sport",
       "exercises": [
         {{
-          "name": "Exercise name",
-          "parameters": "Sets x reps, or duration, frequency per week, intensity/load guidance",
-          "progression": "How to progress this exercise over time",
-          "notes": "Form cues, contraindications, or special considerations"
+          "name": "Full exercise name",
+          "parameters": "Exact sets x reps x frequency (e.g. 3 sets x 15 reps x 3/week), load (% 1RM or RPE or bodyweight), rest periods",
+          "tempo": "Eccentric:isometric:concentric tempo if specified (e.g. 3:1:1)",
+          "progression": "Specific progression criteria — when to advance, by how much (e.g. 'Increase load by 2.5kg when patient achieves 3x15 without pain >3/10')",
+          "notes": "Key form cues, muscle activation targets, positioning, equipment needed, pain guidelines during exercise"
         }}
       ],
-      "program_duration": "Total program length if specified",
-      "outcome_measures": "What outcomes this protocol was shown to improve"
+      "program_duration": "Total weeks/months of the program",
+      "frequency": "Sessions per week",
+      "outcome_measures": "Specific validated tools used (e.g. DASH, PSFS, VAS, NPRS, LEFS, KOOS) and results achieved"
     }}
   ],
+  "outcome_measures_used": [
+    "List any validated outcome measures mentioned (DASH, VAS, NPRS, KOOS, LEFS, SF-36, etc.) with the scores or thresholds reported"
+  ],
   "patient_education": [
-    "Plain-language point patients can understand — what they should know about their condition based on this research",
-    "Another patient education point",
-    "Another patient education point"
+    "Specific, plain-language point a PT can tell a patient directly (e.g. 'Your tendon heals best with controlled loading — pain up to 4/10 during exercise is acceptable and expected')",
+    "Another direct patient education point",
+    "Another direct patient education point",
+    "Another direct patient education point"
   ],
   "clinical_decision_points": {{
     "indications": [
-      "Clear indication for using these interventions"
+      "Specific indication with criteria (e.g. 'Appropriate for patients >6 weeks post-onset with pain <7/10 at rest')"
     ],
     "contraindications": [
-      "Contraindication or situation to avoid"
+      "Specific contraindication (e.g. 'Avoid heavy eccentric loading within 2 weeks of corticosteroid injection')"
     ],
     "red_flags": [
-      "Warning sign that warrants further investigation or referral"
+      "Specific red flag to monitor (e.g. 'Night pain unrelated to position — consider oncologic referral')"
     ],
     "when_to_refer": [
-      "Situation that warrants referral to another provider"
+      "Specific referral trigger (e.g. 'No improvement after 6 weeks of conservative management — refer for imaging')"
     ],
+    "pain_guidelines": "Pain monitoring approach used in the study (e.g. 'VAS up to 5/10 during exercise was permitted; pain must return to baseline within 24h')",
     "dosage_considerations": [
-      "Specific dosage, frequency, or timing note relevant to clinical practice"
+      "Specific load, frequency, or timing guidance from the research"
     ]
   }},
   "limitations": [
-    "Notable limitation that affects how you should apply this research clinically"
+    "Specific limitation and how it affects clinical application"
   ],
-  "clinical_bottom_line": "One sentence: what should a PT actually do differently after reading this research?"
+  "clinical_bottom_line": "One concrete sentence: the single most important thing a PT should do differently or start doing based on this research"
 }}
 
-Return ONLY the JSON object. No markdown, no explanation, no code blocks — just the raw JSON."""
+Return ONLY the JSON object. No markdown, no explanation, no code blocks — just raw JSON."""
 
-    response = model.generate_content(prompt)
-    raw = response.text.strip()
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=4096,
+        temperature=0.2,
+    )
 
-    # Strip markdown code blocks if Gemini wraps them
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    raw = raw.strip()
-
+    raw = strip_json(response.choices[0].message.content)
     return json.loads(raw)
 
+
+def synthesize_condition(condition_name, papers):
+    """Compile multiple papers on the same condition into a master clinical protocol."""
+    client = get_groq_client()
+
+    summaries = []
+    for i, p in enumerate(papers[:8], 1):  # Cap at 8 papers to stay in token budget
+        a = p['analysis']
+        summaries.append(f"""
+PAPER {i}: {a.get('title', p['source'])}
+Evidence level: {a.get('evidence_quality', {}).get('level', 'Unknown')} (score: {a.get('evidence_quality', {}).get('score', '?')}/5)
+Summary: {a.get('clinical_summary', '')}
+Key findings: {json.dumps(a.get('key_findings', []))}
+Exercise protocols: {json.dumps(a.get('exercise_protocols', []))}
+Clinical decisions: {json.dumps(a.get('clinical_decision_points', {}))}
+Bottom line: {a.get('clinical_bottom_line', '')}
+""")
+
+    combined = "\n---\n".join(summaries)
+
+    prompt = f"""You are an expert physical therapist synthesizing research evidence for clinical practice.
+
+You have {len(papers)} research papers on: {condition_name}
+
+Here are the paper summaries:
+{combined}
+
+Synthesize these papers into a single, comprehensive master clinical protocol. Where papers agree, consolidate. Where they conflict, note the disagreement and explain which evidence is stronger and why.
+
+Return a JSON object with this structure:
+
+{{
+  "condition": "{condition_name}",
+  "paper_count": {len(papers)},
+  "overall_evidence_strength": "Strong / Moderate / Limited / Conflicting — with 1-2 sentence explanation",
+  "consensus_findings": [
+    "Finding that multiple papers agree on, with which papers support it"
+  ],
+  "conflicting_findings": [
+    "Area where papers disagree, what each says, and which evidence is stronger"
+  ],
+  "master_exercise_protocol": [
+    {{
+      "phase": "Phase name (e.g. Acute, Subacute, Strengthening, Return to Sport)",
+      "timeframe": "Weeks X-Y",
+      "exercises": [
+        {{
+          "name": "Exercise name",
+          "parameters": "Sets x reps x frequency, load guidance",
+          "progression": "When and how to progress",
+          "evidence_source": "Which paper(s) support this exercise",
+          "notes": "Key clinical notes"
+        }}
+      ]
+    }}
+  ],
+  "combined_patient_education": [
+    "Consolidated patient education point supported by the research"
+  ],
+  "combined_clinical_decisions": {{
+    "indications": ["Consolidated indication"],
+    "contraindications": ["Consolidated contraindication"],
+    "red_flags": ["Consolidated red flag"],
+    "when_to_refer": ["Consolidated referral trigger"],
+    "pain_guidelines": "Best-supported pain monitoring approach across papers"
+  }},
+  "research_gaps": [
+    "Important clinical question not yet answered by this body of research"
+  ],
+  "clinical_bottom_line": "The single most important takeaway from this collection of research for a PT treating this condition"
+}}
+
+Return ONLY the JSON. No markdown, no code blocks."""
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=4096,
+        temperature=0.2,
+    )
+
+    raw = strip_json(response.choices[0].message.content)
+    return json.loads(raw)
+
+
+# ── Routes ──
 
 @app.route('/')
 def index():
@@ -158,14 +260,13 @@ def index():
 
 @app.route('/process', methods=['POST'])
 def process():
-    api_key = os.getenv('GEMINI_API_KEY')
+    api_key = os.getenv('GROQ_API_KEY')
     if not api_key or api_key == 'your-api-key-here':
-        return jsonify({'error': 'API key not configured. Please add your Gemini API key to the .env file and restart the app.'}), 400
+        return jsonify({'error': 'API key not configured. Please add your Groq API key to the .env file and restart the app.'}), 400
 
     source_name = ""
     text = ""
 
-    # Handle URL input (sent as JSON)
     if request.is_json:
         data = request.get_json()
         url = data.get('url', '').strip()
@@ -177,7 +278,6 @@ def process():
         except Exception as e:
             return jsonify({'error': f'Could not fetch URL: {str(e)}'}), 400
 
-    # Handle file upload
     elif 'file' in request.files:
         file = request.files['file']
         if not file or file.filename == '':
@@ -198,17 +298,17 @@ def process():
                 with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     text = f.read()
             else:
-                return jsonify({'error': f'Unsupported file type: .{ext}. Please upload PDF, DOCX, or TXT files.'}), 400
+                return jsonify({'error': f'Unsupported file type: .{ext}'}), 400
         except Exception as e:
             return jsonify({'error': f'Could not read file: {str(e)}'}), 400
     else:
         return jsonify({'error': 'No file or URL provided'}), 400
 
     if not text.strip():
-        return jsonify({'error': 'Could not extract any text from the document. Please check the file is not scanned/image-only.'}), 400
+        return jsonify({'error': 'Could not extract any text from the document.'}), 400
 
     try:
-        analysis = analyze_with_gemini(text, source_name)
+        analysis = analyze_document(text, source_name)
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     except json.JSONDecodeError:
@@ -221,6 +321,7 @@ def process():
         'source': source_name,
         'date': datetime.datetime.now().isoformat(),
         'word_count': len(text.split()),
+        'tags': [],
         'analysis': analysis
     }
 
@@ -231,10 +332,93 @@ def process():
     return jsonify(result)
 
 
+@app.route('/tag/<result_id>', methods=['POST'])
+def update_tags(result_id):
+    data = request.get_json()
+    tags = data.get('tags', [])
+
+    results = load_results()
+    for result in results:
+        if result['id'] == result_id:
+            result['tags'] = tags
+            save_results(results)
+            return jsonify({'success': True})
+    return jsonify({'error': 'Result not found'}), 404
+
+
+@app.route('/tags')
+def get_all_tags():
+    results = load_results()
+    tag_map = {}  # condition -> {subtype -> [result summaries]}
+
+    for r in results:
+        for tag in r.get('tags', []):
+            parts = [p.strip() for p in tag.split('/')]
+            condition = parts[0] if parts else tag
+            subtype = parts[1] if len(parts) > 1 else None
+
+            if condition not in tag_map:
+                tag_map[condition] = {}
+
+            key = subtype or '__all__'
+            if key not in tag_map[condition]:
+                tag_map[condition][key] = []
+
+            tag_map[condition][key].append({
+                'id': r['id'],
+                'title': r['analysis'].get('title', r['source']),
+                'date': r['date'],
+                'evidence_score': r['analysis'].get('evidence_quality', {}).get('score', 0),
+                'evidence_level': r['analysis'].get('evidence_quality', {}).get('level', ''),
+            })
+
+    return jsonify(tag_map)
+
+
+@app.route('/synthesize', methods=['POST'])
+def synthesize():
+    data = request.get_json()
+    condition = data.get('condition', '')
+    tag_filter = data.get('tag', '')  # full tag like "Shoulder / Bicep Tendinopathy"
+
+    if not condition and not tag_filter:
+        return jsonify({'error': 'No condition specified'}), 400
+
+    results = load_results()
+    matching = []
+    for r in results:
+        for tag in r.get('tags', []):
+            if tag_filter and tag == tag_filter:
+                matching.append(r)
+                break
+            elif condition and tag.startswith(condition):
+                matching.append(r)
+                break
+
+    if len(matching) < 2:
+        return jsonify({'error': f'Need at least 2 tagged papers to synthesize. Found {len(matching)}.'}), 400
+
+    label = tag_filter or condition
+    try:
+        synthesis = synthesize_condition(label, matching)
+    except json.JSONDecodeError:
+        return jsonify({'error': 'Failed to parse synthesis. Please try again.'}), 500
+    except Exception as e:
+        return jsonify({'error': f'Synthesis failed: {str(e)}'}), 500
+
+    return jsonify({
+        'id': str(uuid.uuid4()),
+        'type': 'synthesis',
+        'condition': label,
+        'paper_count': len(matching),
+        'date': datetime.datetime.now().isoformat(),
+        'synthesis': synthesis
+    })
+
+
 @app.route('/history')
 def history():
     results = load_results()
-    # Return summary info for sidebar (not full analysis)
     summaries = [
         {
             'id': r['id'],
@@ -243,6 +427,8 @@ def history():
             'title': r['analysis'].get('title', r['source']),
             'evidence_level': r['analysis'].get('evidence_quality', {}).get('level', 'Unknown'),
             'evidence_score': r['analysis'].get('evidence_quality', {}).get('score', 0),
+            'tags': r.get('tags', []),
+            'condition': r['analysis'].get('condition', ''),
         }
         for r in results
     ]
