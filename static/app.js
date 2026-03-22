@@ -569,10 +569,13 @@ async function startBatch(files) {
   listEl.innerHTML = files.map((f, i) => {
     const alreadyDone = existingTitles.has(f.name);
     return `<div class="batch-file-item" id="bfi-${i}">
-      <span class="batch-file-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</span>
-      <span class="batch-file-status ${alreadyDone ? 'batch-status-skipped' : 'batch-status-waiting'}" id="bfs-${i}">
-        ${alreadyDone ? 'Already done' : 'Waiting'}
-      </span>
+      <div class="batch-file-row">
+        <span class="batch-file-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</span>
+        <span class="batch-file-status ${alreadyDone ? 'batch-status-skipped' : 'batch-status-waiting'}" id="bfs-${i}">
+          ${alreadyDone ? 'Already done' : 'Waiting'}
+        </span>
+      </div>
+      <div class="batch-error-detail" id="bfe-${i}" style="display:none"></div>
     </div>`;
   }).join('');
 
@@ -630,22 +633,20 @@ async function startBatch(files) {
   }
 }
 
-function setBatchStatus(index, statusKey, label, tooltip) {
+function setBatchStatus(index, statusKey, label, errorMsg) {
   const el = document.getElementById(`bfs-${index}`);
   if (!el) return;
   el.className = `batch-file-status batch-status-${statusKey}`;
   el.textContent = label;
-  if (tooltip) el.title = tooltip;
   el.closest('.batch-file-item')?.scrollIntoView({ block: 'nearest' });
 
-  // Show error detail below the file item
-  if (statusKey === 'error' && tooltip) {
-    const item = el.closest('.batch-file-item');
-    if (item && !item.querySelector('.batch-error-detail')) {
-      const detail = document.createElement('div');
-      detail.className = 'batch-error-detail';
-      detail.textContent = tooltip;
-      item.insertAdjacentElement('afterend', detail);
+  const errEl = document.getElementById(`bfe-${index}`);
+  if (errEl) {
+    if (statusKey === 'error' && errorMsg) {
+      errEl.textContent = errorMsg;
+      errEl.style.display = '';
+    } else {
+      errEl.style.display = 'none';
     }
   }
 }

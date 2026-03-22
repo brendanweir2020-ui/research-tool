@@ -7,6 +7,7 @@ from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
 from groq import Groq
 import PyPDF2
+from pdfminer.high_level import extract_text as pdfminer_extract
 import docx
 import requests
 from bs4 import BeautifulSoup
@@ -50,14 +51,32 @@ def strip_json(raw):
 
 
 def extract_text_from_pdf(file_path):
-    text = ""
-    with open(file_path, 'rb') as f:
-        reader = PyPDF2.PdfReader(f)
-        for page in reader.pages:
-            extracted = page.extract_text()
-            if extracted:
-                text += extracted + "\n"
-    return text
+    # Try pdfminer first (handles modern PDFs better)
+    try:
+        text = pdfminer_extract(file_path)
+        if text and text.strip():
+            print(f"  [PDF] pdfminer extracted {len(text)} chars from {file_path}")
+            return text
+    except Exception as e:
+        print(f"  [PDF] pdfminer failed ({e}), trying PyPDF2...")
+
+    # Fall back to PyPDF2
+    try:
+        text = ""
+        with open(file_path, 'rb') as f:
+            reader = PyPDF2.PdfReader(f)
+            for page in reader.pages:
+                extracted = page.extract_text()
+                if extracted:
+                    text += extracted + "\n"
+        if text.strip():
+            print(f"  [PDF] PyPDF2 extracted {len(text)} chars from {file_path}")
+            return text
+    except Exception as e:
+        print(f"  [PDF] PyPDF2 also failed: {e}")
+
+    print(f"  [PDF] No text extracted from {file_path} — likely a scanned image PDF")
+    return ""
 
 
 def extract_text_from_docx(file_path):
@@ -324,15 +343,22 @@ def process():
         return jsonify({'error': 'No file or URL provided'}), 400
 
     if not text.strip():
-        return jsonify({'error': 'Could not extract any text from the document.'}), 400
+        msg = f'No text found in "{source_name}". It may be a scanned image PDF — only text-based PDFs are supported.'
+        print(f"  [ERROR] {msg}")
+        return jsonify({'error': msg}), 400
 
+    print(f"  [OK] Extracted {len(text.split())} words from {source_name}, sending to AI...")
     try:
         analysis = analyze_document(text, source_name)
+        print(f"  [OK] Analysis complete for {source_name}")
     except ValueError as e:
+        print(f"  [ERROR] {source_name}: {e}")
         return jsonify({'error': str(e)}), 400
-    except json.JSONDecodeError:
-        return jsonify({'error': 'Failed to parse AI response. Please try again.'}), 500
+    except json.JSONDecodeError as e:
+        print(f"  [ERROR] JSON parse failed for {source_name}: {e}")
+        return jsonify({'error': 'AI returned invalid response. Please try again.'}), 500
     except Exception as e:
+        print(f"  [ERROR] {source_name}: {e}")
         return jsonify({'error': f'Analysis failed: {str(e)}'}), 500
 
     result = {
